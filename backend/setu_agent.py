@@ -42,9 +42,11 @@ REPORT_TONE_TOOL = types.Tool(
                     "tone": {
                         "type": "string",
                         "description": (
-                            "A short, warm, specific emotional read, e.g. "
-                            "'sounds angry but is actually concerned', 'calm and neutral', "
-                            "'sounds tired, not annoyed'. Always filled in, never empty."
+                            "A short, warm sentence for the listener, not a bare adjective pair: "
+                            "name the gap between how it sounded and what it likely means, then "
+                            "give a gentle cue for how to respond. E.g. 'She sounds angry, but "
+                            "she's just concerned — talk to her gently.' or 'Calm and neutral — "
+                            "nothing to read into here.' Always filled in, never empty."
                         ),
                     },
                 },
@@ -102,6 +104,20 @@ class SetuAgent:
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
                 )
             ),
+            # NOTE: start/end-of-speech SENSITIVITY enums are intentionally left at API
+            # defaults — setting them LOW previously stopped real speech from registering
+            # at all. silence_duration_ms alone is a narrower, safer knob: how long a
+            # pause must last before Setu decides a person is done talking and responds.
+            # 500ms was too short — a normal beat between two different speakers landed
+            # inside that window, so both languages got captured as one utterance and
+            # merged into a single report_tone call. 1000ms (a full second, matching the
+            # exact behavior requested) gives real speaker changes enough room to register
+            # as separate turns.
+            realtime_input_config=types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    silence_duration_ms=1000,
+                ),
+            ),
         )
 
         audio_queue: asyncio.Queue = asyncio.Queue()
@@ -121,93 +137,123 @@ class SetuAgent:
 
         try:
             while not stopped.is_set():
+                # Drain stale backlog right before opening a fresh session — while Gemini
+                # was speaking the previous turn's translation (can take several seconds),
+                # the mic kept queuing ambient audio the whole time. Feeding that multi-second
+                # backlog into a brand-new session all at once, out of real-time pace, was
+                # confusing its speech detection and it would never register the next real
+                # utterance. This only runs when we're actually opening a new session (i.e.
+                # after real content), not on every empty/spurious in-session turn, so it
+                # doesn't reintroduce the earlier bug of eating a fast-follow-up utterance.
+                while not audio_queue.empty():
+                    audio_queue.get_nowait()
+
                 async with self.client.aio.live.connect(model=self.model, config=config) as session:
                     print(f"[Setu] Live API session open | {self.language_a} ↔ {self.language_b}")
-                    turn_complete = asyncio.Event()
 
-                    async def send_audio():
-                        while not turn_complete.is_set() and not stopped.is_set():
-                            try:
-                                message = await asyncio.wait_for(audio_queue.get(), timeout=0.2)
-                            except asyncio.TimeoutError:
-                                continue
-                            await session.send_realtime_input(
-                                audio=types.Blob(data=message, mime_type="audio/pcm;rate=16000")
-                            )
+                    # Stay in THIS session across turns that produce no real content — Gemini
+                    # sends a turn_complete even for spurious/empty activity (background noise,
+                    # etc.), and closing+reopening the session on every single one of those was
+                    # both slow (a fresh handshake each time) and actively harmful: recycling
+                    # meant discarding queued audio on reopen, which could eat the start of the
+                    # NEXT real utterance if you started talking during the reconnect. We only
+                    # recycle the session once a turn actually produces content — matching the
+                    # one case we've verified needs a fresh session (a second REAL utterance
+                    # doesn't reliably get heard in the same session).
+                    needs_recycle = False
 
-                    async def receive_responses():
-                        """
-                        Forwards audio bytes immediately for responsiveness, but buffers the
-                        transcript text and waits for the report_tone call so we can send ONE
-                        combined {speaker, translation, tone} message per turn — the frontend
-                        needs to know who spoke before it can route the line to the right column.
-                        """
+                    while not needs_recycle and not stopped.is_set():
+                        turn_complete = asyncio.Event()
                         transcript_parts = []
-                        speaker = None
-                        tone = None
+                        turn_speaker = None
+                        turn_tone = None
 
-                        async def flush():
-                            text = "".join(transcript_parts).strip()
-                            if text or tone:
-                                await websocket.send_text(json.dumps({
-                                    "speaker": speaker,
-                                    "translation": text or None,
-                                    "tone": tone,
-                                }))
+                        async def send_audio():
+                            while not turn_complete.is_set() and not stopped.is_set():
+                                try:
+                                    message = await asyncio.wait_for(audio_queue.get(), timeout=0.2)
+                                except asyncio.TimeoutError:
+                                    continue
+                                await session.send_realtime_input(
+                                    audio=types.Blob(data=message, mime_type="audio/pcm;rate=16000")
+                                )
 
-                        async for response in session.receive():
-                            server_content = getattr(response, "server_content", None)
-                            if server_content:
-                                model_turn = getattr(server_content, "model_turn", None)
-                                if model_turn:
-                                    for part in model_turn.parts:
-                                        if getattr(part, "inline_data", None):
-                                            await websocket.send_bytes(part.inline_data.data)
+                        async def receive_responses():
+                            """
+                            Forwards audio bytes immediately for responsiveness, but buffers the
+                            transcript text and waits for the report_tone call so we can send ONE
+                            combined {speaker, translation, tone} message per turn — the frontend
+                            needs to know who spoke before it can route the line to the right column.
+                            """
+                            nonlocal turn_speaker, turn_tone
 
-                                output_transcription = getattr(server_content, "output_transcription", None)
-                                if output_transcription and output_transcription.text:
-                                    transcript_parts.append(output_transcription.text)
+                            async def flush():
+                                text = "".join(transcript_parts).strip()
+                                if text or turn_tone:
+                                    await websocket.send_text(json.dumps({
+                                        "speaker": turn_speaker,
+                                        "translation": text or None,
+                                        "tone": turn_tone,
+                                    }))
 
-                                if getattr(server_content, "turn_complete", False):
-                                    await flush()
-                                    turn_complete.set()
-                                    break
+                            async for response in session.receive():
+                                server_content = getattr(response, "server_content", None)
+                                if server_content:
+                                    model_turn = getattr(server_content, "model_turn", None)
+                                    if model_turn:
+                                        for part in model_turn.parts:
+                                            if getattr(part, "inline_data", None):
+                                                await websocket.send_bytes(part.inline_data.data)
 
-                            # Speaker + tone, delivered as a mandatory tool call rather than speech.
-                            tool_call = getattr(response, "tool_call", None)
-                            if tool_call and tool_call.function_calls:
-                                responses = []
-                                for fc in tool_call.function_calls:
-                                    if fc.name == "report_tone":
-                                        args = fc.args or {}
-                                        speaker = args.get("speaker")
-                                        tone = args.get("tone")
-                                        print(f"[Setu] report_tone: speaker={speaker!r} tone={tone!r}")
-                                    responses.append(types.FunctionResponse(
-                                        id=fc.id,
-                                        name=fc.name,
-                                        response={"result": "ok"},
-                                    ))
-                                if responses:
-                                    await session.send_tool_response(function_responses=responses)
+                                    output_transcription = getattr(server_content, "output_transcription", None)
+                                    if output_transcription and output_transcription.text:
+                                        transcript_parts.append(output_transcription.text)
 
-                    send_task = asyncio.create_task(send_audio())
-                    recv_task = asyncio.create_task(receive_responses())
-                    stop_wait = asyncio.create_task(stopped.wait())
-                    done, pending = await asyncio.wait(
-                        {send_task, recv_task, stop_wait},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for t in pending:
-                        t.cancel()
-                    for t in done:
-                        exc = t.exception() if not t.cancelled() else None
-                        if exc:
-                            # Transient Live API errors (e.g. 1011 Internal error) land here —
-                            # this is expected and self-heals: we just fall through to the
-                            # outer loop, which opens a fresh session for the next turn.
-                            print(f"[Setu] Turn ended with error (recovering): {exc}")
-                # session closed here — loop back and open a fresh one for the next turn
+                                    if getattr(server_content, "turn_complete", False):
+                                        await flush()
+                                        turn_complete.set()
+                                        break
+
+                                # Speaker + tone, delivered as a mandatory tool call rather than speech.
+                                tool_call = getattr(response, "tool_call", None)
+                                if tool_call and tool_call.function_calls:
+                                    responses = []
+                                    for fc in tool_call.function_calls:
+                                        if fc.name == "report_tone":
+                                            args = fc.args or {}
+                                            turn_speaker = args.get("speaker")
+                                            turn_tone = args.get("tone")
+                                            print(f"[Setu] report_tone: speaker={turn_speaker!r} tone={turn_tone!r}")
+                                        responses.append(types.FunctionResponse(
+                                            id=fc.id,
+                                            name=fc.name,
+                                            response={"result": "ok"},
+                                        ))
+                                    if responses:
+                                        await session.send_tool_response(function_responses=responses)
+
+                        send_task = asyncio.create_task(send_audio())
+                        recv_task = asyncio.create_task(receive_responses())
+                        stop_wait = asyncio.create_task(stopped.wait())
+                        done, pending = await asyncio.wait(
+                            {send_task, recv_task, stop_wait},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in pending:
+                            t.cancel()
+                        for t in done:
+                            exc = t.exception() if not t.cancelled() else None
+                            if exc:
+                                # Transient Live API errors (e.g. 1011 Internal error) land here —
+                                # this is expected and self-heals: the session is likely broken,
+                                # so recycle to a fresh one for the next turn.
+                                print(f"[Setu] Turn ended with error (recovering): {exc}")
+                                needs_recycle = True
+
+                        if turn_speaker or transcript_parts:
+                            needs_recycle = True  # real content happened — recycle before the next turn
+                        # else: empty/spurious turn — loop back and keep listening in this same session
+                # session closed here (only on real recycle or disconnect) — open a fresh one
 
         except Exception as e:
             print(f"[Setu] Session error: {e}")

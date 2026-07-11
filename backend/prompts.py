@@ -46,7 +46,8 @@ MANDATORY — for every single utterance, exactly once, call the report_tone too
       - "Calm and neutral — nothing to read into here."
     Always fill this in, even when the tone is plain and neutral (use something like the last
     example above) — never skip this call, and never leave tone empty or reduce it to a bare
-    adjective pair.
+    adjective pair. Always write the tone in English, no matter what {language_a} or
+    {language_b} are — it is read by an observer who may not speak either language.
 
 Call report_tone in addition to speaking the translation, never instead of it, and call it
 only once per utterance.

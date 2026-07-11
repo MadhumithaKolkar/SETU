@@ -297,6 +297,18 @@ button {
   margin-top: 16px;
 }
 
+.transcript-typing {
+  font-size: 1.1rem;
+  letter-spacing: 0.15em;
+  color: var(--gold);
+  animation: typing-pulse 1s ease-in-out infinite;
+}
+
+@keyframes typing-pulse {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 1; }
+}
+
 @keyframes fadein {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }

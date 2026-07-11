@@ -152,8 +152,8 @@ async function startMicrophone() {
     const source = audioContext.createMediaStreamSource(mediaStream);
 
     // ScriptProcessor captures raw float32 audio samples
-    // Buffer size 4096 = ~256ms chunks at 16kHz — good balance of latency vs overhead
-    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+    // Buffer size 2048 = ~128ms chunks at 16kHz — smaller chunks reach the backend sooner
+    processorNode = audioContext.createScriptProcessor(2048, 1, 1);
 
     let debugFrameCount = 0;
     processorNode.onaudioprocess = (e) => {
@@ -211,6 +211,11 @@ function getPlaybackCtx() {
 
 // ── Audio playback: PCM 24kHz → speaker ───────────────────────────────────
 function playAudioResponse(arrayBuffer) {
+  // We don't know which person is speaking until the tool call resolves near the
+  // end of the turn, so show a pulsing indicator in both columns as soon as audio
+  // starts flowing — gives visible "Setu is working" activity during the wait.
+  startTyping();
+
   try {
     const ctx     = getPlaybackCtx();
     const pcm16   = new Int16Array(arrayBuffer);
@@ -242,6 +247,8 @@ function playAudioResponse(arrayBuffer) {
 // Each backend message is one full turn: { speaker: 'A'|'B', translation, tone }.
 // speaker tells us whose column this turn belongs to.
 function handleTextResponse(data) {
+  stopTyping(); // turn resolved (or errored) — clear the pulsing indicators either way
+
   if (data.error) {
     // No speaker known yet (or session-level failure) — surface in both columns.
     addTranscriptLine('A', `⚠ ${data.error}`, true);
@@ -253,7 +260,7 @@ function handleTextResponse(data) {
   if (!speaker) return; // can't route without knowing who spoke
 
   if (data.translation) {
-    addTranscriptLine(speaker, data.translation);
+    addTranscriptLine(speaker, data.translation, false, /* animate */ true);
   }
   if (data.tone) {
     setTone(speaker, data.tone);
@@ -262,16 +269,62 @@ function handleTextResponse(data) {
 
 
 // ── Transcript helpers ─────────────────────────────────────────────────────
-function addTranscriptLine(speaker, text, isError = false) {
+function addTranscriptLine(speaker, text, isError = false, animate = false) {
   const col = columns[speaker].transcript;
   const empty = col.querySelector('.transcript-empty');
   if (empty) empty.remove();
 
   const p = document.createElement('p');
   p.className = isError ? 'transcript-line error-line' : 'transcript-line';
-  p.textContent = text;
   col.appendChild(p);
   col.scrollTop = col.scrollHeight;
+
+  if (!animate) {
+    p.textContent = text;
+    return;
+  }
+
+  // Typewriter reveal — we only get the translation as one finished block (the
+  // speaker isn't known until the turn resolves), so this fakes a "live" feel
+  // instead of the text just appearing all at once. Reveals a few chars per tick
+  // so it reads as fast/live rather than adding noticeable delay.
+  let i = 0;
+  const charsPerTick = 3;
+  const speed = 10; // ms per tick
+  const timer = setInterval(() => {
+    i += charsPerTick;
+    p.textContent = text.slice(0, i);
+    col.scrollTop = col.scrollHeight;
+    if (i >= text.length) { p.textContent = text; clearInterval(timer); }
+  }, speed);
+}
+
+
+// ── Typing indicator (shown in both columns while a turn is in flight) ─────
+let typingActive = false;
+
+function startTyping() {
+  if (typingActive) return;
+  typingActive = true;
+  for (const speaker of ['A', 'B']) {
+    const col = columns[speaker].transcript;
+    const empty = col.querySelector('.transcript-empty');
+    if (empty) empty.remove();
+    const p = document.createElement('p');
+    p.className = 'transcript-typing';
+    p.textContent = '···';
+    col.appendChild(p);
+    col.scrollTop = col.scrollHeight;
+  }
+}
+
+function stopTyping() {
+  if (!typingActive) return;
+  typingActive = false;
+  for (const speaker of ['A', 'B']) {
+    const el = columns[speaker].transcript.querySelector('.transcript-typing');
+    if (el) el.remove();
+  }
 }
 
 function clearTranscript(speaker) {
