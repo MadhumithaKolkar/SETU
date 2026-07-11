@@ -80,7 +80,6 @@ async function startSession(isReconnect = false) {
   };
 
   ws.onmessage = (event) => {
-    console.log('[Setu debug] ws message received, type:', event.data instanceof ArrayBuffer ? 'audio' : 'text', event.data instanceof ArrayBuffer ? '' : event.data);
     if (event.data instanceof ArrayBuffer) {
       // Binary = PCM audio response from Gemini — play it
       playAudioResponse(event.data);
@@ -148,25 +147,17 @@ async function startMicrophone() {
     // Chrome can create this suspended (autoplay policy) since we're not in a
     // synchronous click handler — resume explicitly or onaudioprocess never fires.
     if (audioContext.state === 'suspended') await audioContext.resume();
-    console.log('[Setu debug] audioContext.state =', audioContext.state, '| sampleRate =', audioContext.sampleRate);
     const source = audioContext.createMediaStreamSource(mediaStream);
 
     // ScriptProcessor captures raw float32 audio samples
     // Buffer size 2048 = ~128ms chunks at 16kHz — smaller chunks reach the backend sooner
     processorNode = audioContext.createScriptProcessor(2048, 1, 1);
 
-    let debugFrameCount = 0;
     processorNode.onaudioprocess = (e) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const float32 = e.inputBuffer.getChannelData(0);
       const pcm16   = float32ToPCM16(float32);
       ws.send(pcm16);
-      debugFrameCount++;
-      if (debugFrameCount % 10 === 1) {
-        let maxAmp = 0;
-        for (let i = 0; i < float32.length; i++) maxAmp = Math.max(maxAmp, Math.abs(float32[i]));
-        console.log('[Setu debug] frame', debugFrameCount, '| max amplitude:', maxAmp.toFixed(4), '| sent bytes:', pcm16.byteLength);
-      }
     };
 
     source.connect(processorNode);
