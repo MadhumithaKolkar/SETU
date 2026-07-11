@@ -1,8 +1,8 @@
-# सेतु — Setu
+# सेतु - Setu
 
 **An emotionally-aware intergenerational language bridge.**
 
-> *Not just a translator. An emotional interpreter.*
+> *Never Letting love get lost in translation :)*
 
 Built for the Google DeepMind Bangalore Hackathon — Track 2: Real-Time Multimodal Interaction (Gemini Live API).
 
