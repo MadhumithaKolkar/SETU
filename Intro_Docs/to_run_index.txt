@@ -1,0 +1,13 @@
+Done. To open it, just run this in your terminal:
+
+
+>>> open /Users/madhumitha.kolkar/Documents/Personal/DM/Intro_Docs/index.html
+
+It'll open directly in your browser — no server needed, no API key, nothing to install.
+
+What the preview does:
+
+Click Start Bridge — status dot pulses gold while "connecting", then turns green
+A simulated conversation plays out automatically — English lines, Hindi translations, and two golden Setu notices appearing and fading at the right moments
+Click End Session to reset and try again
+The language dropdowns work — change the pair before starting

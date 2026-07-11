@@ -1,0 +1,93 @@
+<!--
+  Author: Madhumitha Kolkar
+  Date: July 11, 2026
+  Description: Setu frontend — the visual face of the emotional language bridge.
+               Warm, minimal, human. Not a developer tool.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Setu — A Bridge Between the People You Love</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+  <div id="app">
+
+    <!-- Header -->
+    <div id="header">
+      <h1>सेतु</h1>
+      <p id="subtitle">Setu</p>
+      <p id="tagline">A bridge between the people you love.</p>
+    </div>
+
+    <!-- Language selector -->
+    <div id="language-bar">
+      <div class="lang-block">
+        <label>Person A speaks</label>
+        <select id="lang-a">
+          <option value="Hindi">Hindi</option>
+          <option value="English" selected>English</option>
+          <option value="Tamil">Tamil</option>
+          <option value="Telugu">Telugu</option>
+          <option value="Kannada">Kannada</option>
+          <option value="Bengali">Bengali</option>
+          <option value="Marathi">Marathi</option>
+          <option value="Gujarati">Gujarati</option>
+          <option value="Punjabi">Punjabi</option>
+          <option value="Malayalam">Malayalam</option>
+        </select>
+      </div>
+
+      <div id="bridge-icon">⇄</div>
+
+      <div class="lang-block">
+        <label>Person B speaks</label>
+        <select id="lang-b">
+          <option value="Hindi" selected>Hindi</option>
+          <option value="English">English</option>
+          <option value="Tamil">Tamil</option>
+          <option value="Telugu">Telugu</option>
+          <option value="Kannada">Kannada</option>
+          <option value="Bengali">Bengali</option>
+          <option value="Marathi">Marathi</option>
+          <option value="Gujarati">Gujarati</option>
+          <option value="Punjabi">Punjabi</option>
+          <option value="Malayalam">Malayalam</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Status indicator -->
+    <div id="status-bar">
+      <span id="status-dot"></span>
+      <span id="status-text">Ready to connect.</span>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls">
+      <button id="start-btn">Start Bridge</button>
+      <button id="stop-btn" disabled>End Session</button>
+    </div>
+
+    <!-- Setu notices — emotional subtext overlay -->
+    <div id="setu-notices" aria-live="polite">
+      <!-- Populated dynamically when Setu detects emotional subtext -->
+    </div>
+
+    <!-- Transcript -->
+    <div id="transcript-wrapper">
+      <p id="transcript-label">Bridge transcript</p>
+      <div id="transcript">
+        <!-- Translation lines appear here -->
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/app.js"></script>
+
+</body>
+</html>
