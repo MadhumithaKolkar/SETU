@@ -10,30 +10,31 @@ Built for the Google DeepMind Bangalore Hackathon — Track 2: Real-Time Multimo
 
 ## What It Does
 
-Setu listens continuously to two people speaking different languages and does three things:
+Setu listens live to two people speaking different languages — Person A and Person B, each with their own column — and for every single thing either person says:
 
-1. **Translates** what each person says, warmly and naturally
-2. **Reads emotional tone** from the voice — not just the words
-3. **Surfaces subtext** when what someone says and how they say it don't match
+1. **Translates** it naturally and warmly into the other person's language, spoken aloud in real time
+2. **Reads the emotional tone** behind the words — not just what was said, but how
+3. **Reports it plainly**, every time, as *"Setu feels: ..."* above that person's column
 
-*"She sounds worried, not angry."*
-*"He's asking because he cares, not because he's judging."*
+*"Setu feels: She sounds angry, but she's just concerned — talk to her gently."*
+*"Setu feels: He's asking because he's worried, not judging you — reassure him."*
 
-This is the gap that exists in every Indian multigenerational family — and what Setu bridges.
+This is the gap that exists in every Indian multigenerational family — grandparent and grandchild, different languages, and the emotional register that gets lost in translation between them. Setu bridges both the words and the feeling behind them.
 
 ---
 
 ## Tech Stack
 
-- **Gemini 2.5 Flash Live** — continuous multimodal audio stream with Affective Dialog
-- **FastAPI** — WebSocket backend bridging browser ↔ Gemini
-- **Vanilla JS + Web Audio API** — real-time mic capture and audio playback
+- **Gemini 2.5 native-audio (Live API, `v1alpha`)** — continuous, bidirectional audio streaming with **Affective Dialog** (native vocal-tone understanding)
+- **Function calling** — the model reports speaker + emotional tone via a mandatory `report_tone` tool call on every turn, kept separate from the spoken translation so it never gets said aloud
+- **FastAPI + WebSockets** — bridges the browser and the Gemini Live API, recycling a fresh Live session per conversational turn (this preview model doesn't reliably listen for a second utterance within one session)
+- **Vanilla JS + Web Audio API** — real-time mic capture (16kHz PCM in), audio playback (24kHz PCM out), no frameworks
 
 ---
 
 ## Author
 
-**Madhumitha Kolkar** — Senior Machine Learning Engineer  
+**Madhumitha Kolkar** — Senior Machine Learning Engineer
 [linkedin.com/in/madhumithakolkar](https://linkedin.com/in/madhumithakolkar) | [github.com/MadhumithaKolkar](https://github.com/MadhumithaKolkar)
 
 *Built on a belief that AI should understand how people feel, not just what they say.*

@@ -60,9 +60,9 @@ REPORT_TONE_TOOL = types.Tool(
 
 class SetuAgent:
     """
-    Manages a single Setu bridge session between two speakers.
-    Opens a persistent connection to Gemini Live API, streams PCM audio in,
-    and streams translated audio + transcript + subtext notices back to the frontend WebSocket.
+    Manages a single Setu bridge session between two speakers over one browser WebSocket.
+    Streams PCM audio into a fresh Gemini Live session per conversational turn, and streams
+    translated audio + transcript + speaker/tone (via report_tone) back to the frontend.
     """
 
     def __init__(self, language_a: str = "Hindi", language_b: str = "English"):
