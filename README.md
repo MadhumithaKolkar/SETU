@@ -2,7 +2,7 @@
 
 **An emotionally-aware intergenerational language bridge.**
 
-> *Never Letting love get lost in translation :)*
+*Never Letting love get lost in translation :)*
 
 Built for the Google DeepMind Bangalore Hackathon — Track 2: Real-Time Multimodal Interaction (Gemini Live API).
 
