@@ -4,6 +4,8 @@
 
 *Never Letting love get lost in translation :)*
 
+https://youtu.be/OATfyO08xvc?si=stdwzLd0nbMyfTPl
+
 Built for the Google DeepMind Bangalore Hackathon — Track 2: Real-Time Multimodal Interaction (Gemini Live API).
 
 ---
