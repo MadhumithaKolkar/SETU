@@ -6,7 +6,8 @@
  *   - Converts to raw 16-bit PCM at 16kHz (what Gemini Live API expects)
  *   - Streams PCM chunks over WebSocket to the FastAPI backend
  *   - Receives translated audio (PCM 24kHz) and plays it back
- *   - Receives parsed JSON text (translation + optional subtext notice) and updates the UI
+ *   - Receives parsed JSON text ({ speaker, translation, tone }) and routes it to that
+ *     person's column — Person A and Person B each get their own transcript + tone banner
  */
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -14,7 +15,9 @@ let ws = null;
 let audioContext = null;
 let processorNode = null;
 let mediaStream = null;
-let noticeTimer = null;
+let userInitiatedStop = false;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 const INPUT_SAMPLE_RATE  = 16000;  // Gemini Live API expects 16kHz PCM input
 const OUTPUT_SAMPLE_RATE = 24000;  // Gemini Live API outputs 24kHz PCM
@@ -24,21 +27,32 @@ const startBtn      = document.getElementById('start-btn');
 const stopBtn       = document.getElementById('stop-btn');
 const statusDot     = document.getElementById('status-dot');
 const statusText    = document.getElementById('status-text');
-const transcript    = document.getElementById('transcript');
-const setuNotices   = document.getElementById('setu-notices');
 const langASelect   = document.getElementById('lang-a');
 const langBSelect   = document.getElementById('lang-b');
 
-// ── Init: show placeholder in transcript ──────────────────────────────────
-addEmptyState();
+// Per-person column refs, keyed by speaker id ('A' / 'B') for easy routing.
+const columns = {
+  A: {
+    tone: document.getElementById('tone-a'),
+    label: document.getElementById('label-a'),
+    transcript: document.getElementById('transcript-a'),
+  },
+  B: {
+    tone: document.getElementById('tone-b'),
+    label: document.getElementById('label-b'),
+    transcript: document.getElementById('transcript-b'),
+  },
+};
+
+// Note: initial empty-state placeholders are already in index.html markup.
 
 // ── Button handlers ────────────────────────────────────────────────────────
-startBtn.addEventListener('click', startSession);
-stopBtn.addEventListener('click', stopSession);
+startBtn.addEventListener('click', () => { userInitiatedStop = false; startSession(); });
+stopBtn.addEventListener('click', () => { userInitiatedStop = true; stopSession(); });
 
 
 // ── Session start ──────────────────────────────────────────────────────────
-async function startSession() {
+async function startSession(isReconnect = false) {
   const langA = langASelect.value;
   const langB = langBSelect.value;
 
@@ -47,10 +61,12 @@ async function startSession() {
     return;
   }
 
-  setStatus('connecting', 'Connecting to Setu...');
+  setStatus('connecting', isReconnect ? 'Reconnecting...' : 'Connecting to Setu...');
   startBtn.disabled = true;
   stopBtn.disabled  = false;
-  clearTranscript();
+  columns.A.label.textContent = `Person A · ${langA}`;
+  columns.B.label.textContent = `Person B · ${langB}`;
+  if (!isReconnect) { clearTranscript('A'); clearTranscript('B'); }
 
   // Open WebSocket to backend with language pair as query params
   const wsUrl = `ws://localhost:8000/ws/setu?lang_a=${encodeURIComponent(langA)}&lang_b=${encodeURIComponent(langB)}`;
@@ -58,22 +74,23 @@ async function startSession() {
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = async () => {
+    reconnectAttempts = 0;
     setStatus('live', `Bridge live: ${langA} ↔ ${langB}`);
     await startMicrophone();
   };
 
   ws.onmessage = (event) => {
+    console.log('[Setu debug] ws message received, type:', event.data instanceof ArrayBuffer ? 'audio' : 'text', event.data instanceof ArrayBuffer ? '' : event.data);
     if (event.data instanceof ArrayBuffer) {
       // Binary = PCM audio response from Gemini — play it
       playAudioResponse(event.data);
     } else {
-      // Text = JSON with translation + optional notice
+      // Text = JSON with { speaker, translation, tone } for one turn
       try {
         const data = JSON.parse(event.data);
         handleTextResponse(data);
-      } catch {
-        // Fallback: raw text
-        addTranscriptLine(event.data);
+      } catch (err) {
+        console.error('[Setu] Failed to parse ws text message:', err, event.data);
       }
     }
   };
@@ -83,11 +100,24 @@ async function startSession() {
   };
 
   ws.onclose = () => {
-    if (statusDot.className === 'live') {
-      setStatus('', 'Session ended.');
-    }
     // Pass true so stopSession doesn't try to close ws again (already closed)
     stopSession(true);
+
+    if (userInitiatedStop) {
+      setStatus('', 'Session ended.');
+      return;
+    }
+
+    // Unexpected close (e.g. a transient Live API error) — the preview model
+    // occasionally drops the session; auto-reconnect so the demo self-heals
+    // instead of going silently dead.
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      reconnectAttempts++;
+      setStatus('connecting', `Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+      setTimeout(() => startSession(true), 800);
+    } else {
+      setStatus('error', 'Bridge lost connection. Click Start Bridge to retry.');
+    }
   };
 }
 
@@ -115,17 +145,28 @@ async function startMicrophone() {
 
     // AudioContext at 16kHz — Gemini Live API's required input rate
     audioContext = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
+    // Chrome can create this suspended (autoplay policy) since we're not in a
+    // synchronous click handler — resume explicitly or onaudioprocess never fires.
+    if (audioContext.state === 'suspended') await audioContext.resume();
+    console.log('[Setu debug] audioContext.state =', audioContext.state, '| sampleRate =', audioContext.sampleRate);
     const source = audioContext.createMediaStreamSource(mediaStream);
 
     // ScriptProcessor captures raw float32 audio samples
     // Buffer size 4096 = ~256ms chunks at 16kHz — good balance of latency vs overhead
     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
 
+    let debugFrameCount = 0;
     processorNode.onaudioprocess = (e) => {
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const float32 = e.inputBuffer.getChannelData(0);
       const pcm16   = float32ToPCM16(float32);
       ws.send(pcm16);
+      debugFrameCount++;
+      if (debugFrameCount % 10 === 1) {
+        let maxAmp = 0;
+        for (let i = 0; i < float32.length; i++) maxAmp = Math.max(maxAmp, Math.abs(float32[i]));
+        console.log('[Setu debug] frame', debugFrameCount, '| max amplitude:', maxAmp.toFixed(4), '| sent bytes:', pcm16.byteLength);
+      }
     };
 
     source.connect(processorNode);
@@ -198,59 +239,62 @@ function playAudioResponse(arrayBuffer) {
 
 
 // ── Text response handler ──────────────────────────────────────────────────
+// Each backend message is one full turn: { speaker: 'A'|'B', translation, tone }.
+// speaker tells us whose column this turn belongs to.
 function handleTextResponse(data) {
   if (data.error) {
-    addTranscriptLine(`⚠ ${data.error}`, true);
+    // No speaker known yet (or session-level failure) — surface in both columns.
+    addTranscriptLine('A', `⚠ ${data.error}`, true);
+    addTranscriptLine('B', `⚠ ${data.error}`, true);
     return;
   }
 
-  if (data.translation) {
-    addTranscriptLine(data.translation);
-  }
+  const speaker = data.speaker === 'A' || data.speaker === 'B' ? data.speaker : null;
+  if (!speaker) return; // can't route without knowing who spoke
 
-  if (data.notice) {
-    showNotice(data.notice);
+  if (data.translation) {
+    addTranscriptLine(speaker, data.translation);
+  }
+  if (data.tone) {
+    setTone(speaker, data.tone);
   }
 }
 
 
 // ── Transcript helpers ─────────────────────────────────────────────────────
-function addTranscriptLine(text, isError = false) {
-  // Remove empty state placeholder if present
-  const empty = transcript.querySelector('.transcript-empty');
+function addTranscriptLine(speaker, text, isError = false) {
+  const col = columns[speaker].transcript;
+  const empty = col.querySelector('.transcript-empty');
   if (empty) empty.remove();
 
   const p = document.createElement('p');
   p.className = isError ? 'transcript-line error-line' : 'transcript-line';
   p.textContent = text;
-  transcript.appendChild(p);
-  transcript.scrollTop = transcript.scrollHeight;
+  col.appendChild(p);
+  col.scrollTop = col.scrollHeight;
 }
 
-function clearTranscript() {
-  transcript.innerHTML = '';
+function clearTranscript(speaker) {
+  columns[speaker].transcript.innerHTML = '';
+  addEmptyState(speaker);
 }
 
-function addEmptyState() {
+function addEmptyState(speaker) {
   const p = document.createElement('p');
   p.className = 'transcript-empty';
-  p.textContent = 'Translations will appear here once the bridge is live.';
-  transcript.appendChild(p);
+  p.textContent = `Person ${speaker}'s translated speech will appear here.`;
+  columns[speaker].transcript.appendChild(p);
 }
 
 
-// ── Setu notices (emotional subtext) ──────────────────────────────────────
-function showNotice(text) {
-  // Clear any existing fade-out timer
-  if (noticeTimer) clearTimeout(noticeTimer);
-
-  setuNotices.textContent = '✦  ' + text;
-  setuNotices.classList.add('visible');
-
-  // Auto-hide after 7 seconds
-  noticeTimer = setTimeout(() => {
-    setuNotices.classList.remove('visible');
-  }, 7000);
+// ── Tone banner (Setu's emotional read, shown above each person's column) ──
+function setTone(speaker, tone) {
+  const el = columns[speaker].tone;
+  el.textContent = 'Setu feels: ' + tone;
+  el.classList.remove('updated');
+  // Force reflow so the pulse animation replays even for back-to-back identical tones.
+  void el.offsetWidth;
+  el.classList.add('updated');
 }
 
 

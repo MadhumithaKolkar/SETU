@@ -72,16 +72,21 @@
       <button id="stop-btn" disabled>End Session</button>
     </div>
 
-    <!-- Setu notices — emotional subtext overlay -->
-    <div id="setu-notices" aria-live="polite">
-      <!-- Populated dynamically when Setu detects emotional subtext -->
-    </div>
-
-    <!-- Transcript -->
-    <div id="transcript-wrapper">
-      <p id="transcript-label">Bridge transcript</p>
-      <div id="transcript">
-        <!-- Translation lines appear here -->
+    <!-- Bridge transcript — one column per person, tone banner on top of each -->
+    <div id="bridge-columns">
+      <div class="person-column">
+        <p class="person-tone" id="tone-a" aria-live="polite">Setu feels: —</p>
+        <p class="person-label" id="label-a">Person A</p>
+        <div class="person-transcript" id="transcript-a">
+          <p class="transcript-empty">Person A's translated speech will appear here.</p>
+        </div>
+      </div>
+      <div class="person-column">
+        <p class="person-tone" id="tone-b" aria-live="polite">Setu feels: —</p>
+        <p class="person-label" id="label-b">Person B</p>
+        <div class="person-transcript" id="transcript-b">
+          <p class="transcript-empty">Person B's translated speech will appear here.</p>
+        </div>
       </div>
     </div>
 
